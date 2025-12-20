@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>我的相册 - 瀑布流</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .masonry-container { display: flex; gap: 12px; width: 100%; }
+    .masonry-column { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+    .masonry-item { border-radius: 8px; overflow: hidden; background: #fff; transition: transform 0.3s; }
+    .masonry-item:hover { transform: scale(1.02); }
+    .masonry-item img { width: 100%; display: block; height: auto; }
+    #loading-sentinel { height: 50px; }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <section class="max-w-7xl mx-auto p-4">
+    <header class="py-6"><h1 class="text-2xl font-bold text-gray-800">Gallery</h1></header>
+
+    <div id="masonry" class="masonry-container"></div>
+    
+    <div id="loading-sentinel"></div>
+  </section>
+
+  <script>
+    const masonry = document.getElementById('masonry');
+    const columnCount = window.innerWidth < 640 ? 2 : 4; // 手机端2列，PC端4列
+    const columns = [];
+    let allImages = [];
+    let currentIndex = 0;
+    const batchSize = 12;
+
+    // 1. 初始化列
+    for (let i = 0; i < columnCount; i++) {
+      const col = document.createElement('div');
+      col.className = 'masonry-column';
+      masonry.appendChild(col);
+      columns.push(col);
+    }
+
+    // 2. 加载图片列表
+    async function init() {
+      try {
+        const response = await fetch('./images.json');
+        allImages = await response.json();
+        // 打乱顺序实现随机感
+        allImages.sort(() => Math.random() - 0.5);
+        loadMore();
+        setupInfiniteScroll();
+      } catch (e) {
+        console.error("无法加载图片列表，请确保已运行 build-list.js", e);
+      }
+    }
+
+    function loadMore() {
+      for (let i = 0; i < batchSize; i++) {
+        // 如果索引超出，重置为0实现循环显示
+        if (currentIndex >= allImages.length) {
+            currentIndex = 0; 
+            // 可选：循环时再次打乱
+            allImages.sort(() => Math.random() - 0.5);
+        }
+        
+        const imgName = allImages[currentIndex];
+        const card = document.createElement('div');
+        card.className = 'masonry-item shadow-sm';
+        card.innerHTML = `<img src="./img/${imgName}" loading="lazy" alt="photo">`;
+        
+        // 将图片放入最短的列中（优化排版）
+        const heights = columns.map(c => c.offsetHeight);
+        const shortestColumn = columns[heights.indexOf(Math.min(...heights))];
+        shortestColumn.appendChild(card);
+        
+        currentIndex++;
+      }
+    }
+
+    // 3. 交叉观察器实现自动刷新（无限滚动）
+    function setupInfiniteScroll() {
+      const observer = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting) {
+          loadMore();
+        }
+      }, { rootMargin: '200px' });
+      observer.observe(document.getElementById('loading-sentinel'));
+    }
+
+    init();
+  </script>
+</body>
+</html>
