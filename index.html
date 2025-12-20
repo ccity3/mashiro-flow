@@ -2,36 +2,70 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>我的相册 - 瀑布流</title>
+  <title>Mashiro Flow Gallery</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    .masonry-container { display: flex; gap: 12px; width: 100%; }
-    .masonry-column { flex: 1; display: flex; flex-direction: column; gap: 12px; }
-    .masonry-item { border-radius: 8px; overflow: hidden; background: #fff; transition: transform 0.3s; }
-    .masonry-item:hover { transform: scale(1.02); }
-    .masonry-item img { width: 100%; display: block; height: auto; }
-    #loading-sentinel { height: 50px; }
+    /* 强制容器为 Flex 布局 */
+    .masonry-container { 
+      display: flex !important; 
+      gap: 16px; 
+      width: 100%; 
+      align-items: flex-start;
+    }
+    /* 确保每一列平均分配宽度 */
+    .masonry-column { 
+      flex: 1; 
+      display: flex; 
+      flex-direction: column; 
+      gap: 16px; 
+      min-width: 0; /* 防止内容撑开列宽 */
+    }
+    .masonry-item { 
+      border-radius: 12px; 
+      overflow: hidden; 
+      background: #fff; 
+      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); 
+      transition: transform 0.2s; 
+    }
+    .masonry-item:hover { transform: translateY(-4px); }
+    .masonry-item img { 
+      width: 100%; 
+      display: block; 
+      height: auto; 
+      background: #f3f4f6; /* 占位背景色 */
+    }
+    #sentinel { height: 50px; margin-top: 20px; }
   </style>
 </head>
-<body class="bg-gray-50">
-  <section class="max-w-7xl mx-auto p-4">
-    <header class="py-6"><h1 class="text-2xl font-bold text-gray-800">Gallery</h1></header>
+<body class="bg-slate-50">
+  <section class="max-w-6xl mx-auto p-4">
+    <header class="py-8">
+      <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight">Mashiro Flow</h1>
+    </header>
 
     <div id="masonry" class="masonry-container"></div>
     
-    <div id="loading-sentinel"></div>
+    <div id="sentinel"></div>
   </section>
 
   <script>
     const masonry = document.getElementById('masonry');
-    const columnCount = window.innerWidth < 640 ? 2 : 4; // 手机端2列，PC端4列
-    const columns = [];
-    let allImages = [];
-    let currentIndex = 0;
-    const batchSize = 12;
+    // 根据屏幕宽度决定列数：手机 2 列，平板 3 列，电脑 4 列
+    const getColumnCount = () => {
+      const width = window.innerWidth;
+      if (width < 640) return 2;
+      if (width < 1024) return 3;
+      return 4;
+    };
 
-    // 1. 初始化列
+    const columnCount = getColumnCount();
+    const columns = [];
+    let rawImageList = [];
+    let displayQueue = [];
+    let globalIndex = 0; // 用于辅助均匀分配
+
+    // 初始化列
     for (let i = 0; i < columnCount; i++) {
       const col = document.createElement('div');
       col.className = 'masonry-column';
@@ -39,53 +73,61 @@
       columns.push(col);
     }
 
-    // 2. 加载图片列表
     async function init() {
       try {
-        const response = await fetch('./images.json');
-        allImages = await response.json();
-        // 打乱顺序实现随机感
-        allImages.sort(() => Math.random() - 0.5);
-        loadMore();
-        setupInfiniteScroll();
-      } catch (e) {
-        console.error("无法加载图片列表，请确保已运行 build-list.js", e);
+        // 获取构建脚本生成的清单
+        const res = await fetch('./images.json');
+        if (!res.ok) throw new Error('Failed to load images.json');
+        rawImageList = await res.json();
+        
+        refreshQueue();
+        loadImages(12); // 初始加载 12 张
+        setupObserver();
+      } catch (err) {
+        console.error("初始化失败:", err);
       }
     }
 
-    function loadMore() {
-      for (let i = 0; i < batchSize; i++) {
-        // 如果索引超出，重置为0实现循环显示
-        if (currentIndex >= allImages.length) {
-            currentIndex = 0; 
-            // 可选：循环时再次打乱
-            allImages.sort(() => Math.random() - 0.5);
+    function refreshQueue() {
+      // 克隆并随机打乱
+      displayQueue = [...rawImageList].sort(() => Math.random() - 0.5);
+    }
+
+    function loadImages(count = 8) {
+      for (let i = 0; i < count; i++) {
+        if (displayQueue.length === 0) {
+          refreshQueue();
         }
+
+        const fileName = displayQueue.shift();
+        const item = document.createElement('div');
+        item.className = 'masonry-item';
         
-        const imgName = allImages[currentIndex];
-        const card = document.createElement('div');
-        card.className = 'masonry-item shadow-sm';
-        card.innerHTML = `<img src="./img/${imgName}" loading="lazy" alt="photo">`;
+        const img = document.createElement('img');
+        // 关键：为了防止缓存导致随机失效，可以不加后缀，或根据需要加
+        img.src = `./img/${fileName}`;
+        img.loading = 'lazy';
         
-        // 将图片放入最短的列中（优化排版）
-        const heights = columns.map(c => c.offsetHeight);
-        const shortestColumn = columns[heights.indexOf(Math.min(...heights))];
-        shortestColumn.appendChild(card);
+        item.appendChild(img);
         
-        currentIndex++;
+        // 【核心修复】：不再依赖 offsetHeight，改用简单的取模分配
+        // 这样可以保证即便图片没加载，也会均匀分布在各列
+        columns[globalIndex % columnCount].appendChild(item);
+        globalIndex++;
       }
     }
 
-    // 3. 交叉观察器实现自动刷新（无限滚动）
-    function setupInfiniteScroll() {
+    function setupObserver() {
       const observer = new IntersectionObserver((entries) => {
         if (entries[0].isIntersecting) {
-          loadMore();
+          loadImages(8);
         }
-      }, { rootMargin: '200px' });
-      observer.observe(document.getElementById('loading-sentinel'));
+      }, { rootMargin: '400px' });
+      
+      observer.observe(document.getElementById('sentinel'));
     }
 
+    // 启动
     init();
   </script>
 </body>
