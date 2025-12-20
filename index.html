@@ -6,64 +6,49 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    /* 强制容器为 Flex 布局 */
     .masonry-container { 
-      display: flex !important; 
-      gap: 16px; 
+      display: flex; 
+      gap: 12px; 
       width: 100%; 
       align-items: flex-start;
     }
-    /* 确保每一列平均分配宽度 */
     .masonry-column { 
       flex: 1; 
       display: flex; 
       flex-direction: column; 
-      gap: 16px; 
-      min-width: 0; /* 防止内容撑开列宽 */
+      gap: 12px; 
+      min-width: 0;
     }
     .masonry-item { 
-      border-radius: 12px; 
+      border-radius: 10px; 
       overflow: hidden; 
       background: #fff; 
-      box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); 
-      transition: transform 0.2s; 
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      /* 初始透明度，等图片加载后再显示，防止闪烁 */
+      opacity: 0;
+      transition: opacity 0.3s ease, transform 0.2s;
     }
+    .masonry-item.loaded { opacity: 1; }
     .masonry-item:hover { transform: translateY(-4px); }
-    .masonry-item img { 
-      width: 100%; 
-      display: block; 
-      height: auto; 
-      background: #f3f4f6; /* 占位背景色 */
-    }
-    #sentinel { height: 50px; margin-top: 20px; }
+    .masonry-item img { width: 100%; display: block; height: auto; }
+    #sentinel { height: 80px; }
   </style>
 </head>
-<body class="bg-slate-50">
+<body class="bg-gray-50 text-gray-900">
   <section class="max-w-6xl mx-auto p-4">
-    <header class="py-8">
-      <h1 class="text-3xl font-extrabold text-slate-800 tracking-tight">Mashiro Flow</h1>
-    </header>
+    <header class="py-6"><h1 class="text-2xl font-bold">Gallery</h1></header>
 
     <div id="masonry" class="masonry-container"></div>
-    
     <div id="sentinel"></div>
   </section>
 
   <script>
     const masonry = document.getElementById('masonry');
-    // 根据屏幕宽度决定列数：手机 2 列，平板 3 列，电脑 4 列
-    const getColumnCount = () => {
-      const width = window.innerWidth;
-      if (width < 640) return 2;
-      if (width < 1024) return 3;
-      return 4;
-    };
-
+    const getColumnCount = () => window.innerWidth < 640 ? 2 : (window.innerWidth < 1024 ? 3 : 4);
     const columnCount = getColumnCount();
     const columns = [];
     let rawImageList = [];
     let displayQueue = [];
-    let globalIndex = 0; // 用于辅助均匀分配
 
     // 初始化列
     for (let i = 0; i < columnCount; i++) {
@@ -75,59 +60,75 @@
 
     async function init() {
       try {
-        // 获取构建脚本生成的清单
         const res = await fetch('./images.json');
-        if (!res.ok) throw new Error('Failed to load images.json');
         rawImageList = await res.json();
-        
         refreshQueue();
-        loadImages(12); // 初始加载 12 张
+        // 初始加载：为了防止不对称，我们需要一张一张顺序插入
+        await loadMore(15); 
         setupObserver();
-      } catch (err) {
-        console.error("初始化失败:", err);
-      }
+      } catch (err) { console.error(err); }
     }
 
     function refreshQueue() {
-      // 克隆并随机打乱
       displayQueue = [...rawImageList].sort(() => Math.random() - 0.5);
     }
 
-    function loadImages(count = 8) {
-      for (let i = 0; i < count; i++) {
-        if (displayQueue.length === 0) {
-          refreshQueue();
-        }
+    // 核心改进：等待图片预加载完成后再决定放入哪一列
+    async function addSingleImage() {
+      if (displayQueue.length === 0) refreshQueue();
+      const fileName = displayQueue.shift();
 
-        const fileName = displayQueue.shift();
-        const item = document.createElement('div');
-        item.className = 'masonry-item';
-        
-        const img = document.createElement('img');
-        // 关键：为了防止缓存导致随机失效，可以不加后缀，或根据需要加
+      return new Promise((resolve) => {
+        const img = new Image();
         img.src = `./img/${fileName}`;
-        img.loading = 'lazy';
         
-        item.appendChild(img);
-        
-        // 【核心修复】：不再依赖 offsetHeight，改用简单的取模分配
-        // 这样可以保证即便图片没加载，也会均匀分布在各列
-        columns[globalIndex % columnCount].appendChild(item);
-        globalIndex++;
+        // 当图片元数据加载完成（能获取高度）时执行
+        img.onload = () => {
+          const item = document.createElement('div');
+          item.className = 'masonry-item';
+          
+          const displayImg = document.createElement('img');
+          displayImg.src = img.src;
+          item.appendChild(displayImg);
+
+          // 寻找当前最短的列
+          const shortestCol = columns.reduce((prev, curr) => 
+            prev.offsetHeight <= curr.offsetHeight ? prev : curr
+          );
+          
+          shortestCol.appendChild(item);
+          // 稍微延迟一点点让浏览器计算高度，并添加渐显动画
+          requestAnimationFrame(() => {
+            item.classList.add('loaded');
+            resolve();
+          });
+        };
+
+        // 如果图片加载失败，跳过这一张
+        img.onerror = () => resolve();
+      });
+    }
+
+    async function loadMore(count = 8) {
+      // 使用 for 循环配合 await，确保一张接一张地计算高度并插入
+      for (let i = 0; i < count; i++) {
+        await addSingleImage();
       }
     }
 
     function setupObserver() {
-      const observer = new IntersectionObserver((entries) => {
+      const observer = new IntersectionObserver(async (entries) => {
         if (entries[0].isIntersecting) {
-          loadImages(8);
+          // 停止观察，防止连续触发
+          observer.unobserve(entries[0].target);
+          await loadMore(8);
+          // 加载完后重新观察
+          observer.observe(document.getElementById('sentinel'));
         }
-      }, { rootMargin: '400px' });
-      
+      }, { rootMargin: '300px' });
       observer.observe(document.getElementById('sentinel'));
     }
 
-    // 启动
     init();
   </script>
 </body>
